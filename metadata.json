@@ -1,0 +1,7 @@
+{
+  "name": "koa-system- rebuild 2 - Migration rebuild",
+  "description": "A comprehensive management and compliance system designed to ensure zoos meet the requirements of the Zoo Licensing Act 1981, including conservation, education, and animal welfare standards.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
