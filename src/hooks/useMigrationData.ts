@@ -3,6 +3,7 @@ import { db } from '@/src/db';
 import { Animal, LogEntry, AnimalCategory, HazardRating, ConservationStatus } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 import { useAuthStore } from '@/src/store/authStore';
+import { supabase } from '@/src/services/supabaseClient';
 
 interface MigrationStats {
   animalsFound: number;
@@ -77,12 +78,21 @@ export const useMigrationData = () => {
       const animals: Animal[] = [];
       const logs: LogEntry[] = [];
       const userId = profile?.id || 'system';
+      
+      const isValidUUID = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      const idMap = new Map<string, string>();
 
       let count = 0;
       for (const legacy of rawAnimals) {
         count++;
-        // Use existing ID if valid UUID, otherwise generate new
-        const animalId = (legacy.id && legacy.id.length > 10) ? legacy.id : uuidv4();
+        
+        let animalId = legacy.id;
+        if (!animalId || !isValidUUID(animalId)) {
+            animalId = uuidv4();
+            if (legacy.id) {
+                idMap.set(legacy.id, animalId);
+            }
+        }
         
         // Map legacy fields with strict casting and defaults
         const animal: Animal = {
@@ -119,8 +129,14 @@ export const useMigrationData = () => {
         // Map nested logs if they exist (Legacy format)
         if (legacy.logs && Array.isArray(legacy.logs)) {
           for (const legacyLog of legacy.logs) {
+            
+            let logId = legacyLog.id;
+            if (!logId || !isValidUUID(logId)) {
+                logId = uuidv4();
+            }
+
             const log: LogEntry = {
-              id: uuidv4(),
+              id: logId,
               animal_id: animalId,
               log_date: legacyLog.timestamp || legacyLog.log_date || legacyLog.logDate ? new Date(legacyLog.timestamp || legacyLog.log_date || legacyLog.logDate) : new Date(),
               log_type: (legacyLog.type || legacyLog.log_type || legacyLog.logType || 'General') as any,
@@ -146,9 +162,25 @@ export const useMigrationData = () => {
       let logCount = 0;
       for (const rawLog of rawLogs) {
         logCount++;
+        
+        let logId = rawLog.id;
+        if (!logId || !isValidUUID(logId)) {
+            logId = uuidv4();
+        }
+        
+        let animalId = rawLog.animal_id || rawLog.animalId;
+        if (animalId && idMap.has(animalId)) {
+            animalId = idMap.get(animalId);
+        } else if (!animalId || !isValidUUID(animalId)) {
+            // If we can't map it and it's not a valid UUID, we have to skip or generate a dummy.
+            // Skipping is safer to avoid orphaned records in Supabase.
+            console.warn(`Skipping log ${logId} due to invalid/unmapped animal_id: ${animalId}`);
+            continue;
+        }
+
         const log: LogEntry = {
-          id: rawLog.id || uuidv4(),
-          animal_id: rawLog.animal_id || rawLog.animalId, // Must exist in this format
+          id: logId,
+          animal_id: animalId, // Must exist in this format
           log_date: rawLog.log_date || rawLog.logDate ? new Date(rawLog.log_date || rawLog.logDate) : new Date(),
           log_type: (rawLog.log_type || rawLog.logType || 'General') as any,
           value: String(rawLog.value || rawLog.Value || ''),
@@ -203,7 +235,31 @@ export const useMigrationData = () => {
       // Import Animals in chunks
       for (let i = 0; i < stagedAnimals.length; i += ANIMAL_CHUNK) {
         const chunk = stagedAnimals.slice(i, i + ANIMAL_CHUNK);
+        
+        // 1. Write to local Dexie database first (Offline Backup/Cache)
         await db.animals.bulkPut(chunk);
+        
+        // 2. Attempt to sync to Supabase via API
+        try {
+            // Prepare records for Supabase (ensure dates are strings)
+            const supabaseChunk = chunk.map(animal => ({
+                ...animal,
+                dob: animal.dob ? new Date(animal.dob).toISOString() : null,
+                acquisition_date: animal.acquisition_date ? new Date(animal.acquisition_date).toISOString() : null,
+                quarantine_start_date: animal.quarantine_start_date ? new Date(animal.quarantine_start_date).toISOString() : null,
+                created_at: animal.created_at ? new Date(animal.created_at).toISOString() : new Date().toISOString(),
+                updated_at: animal.updated_at ? new Date(animal.updated_at).toISOString() : new Date().toISOString(),
+            }));
+            
+            const { error } = await supabase.from('animals').upsert(supabaseChunk);
+            if (error) {
+                console.error('Supabase sync error for animals chunk:', error);
+                // We don't throw here, allowing the local Dexie data to persist
+            }
+        } catch (syncError) {
+            console.error('Failed to sync animals chunk to Supabase:', syncError);
+        }
+
         processedCount += chunk.length;
         
         // Throttle state updates to prevent UI flooding
@@ -222,7 +278,33 @@ export const useMigrationData = () => {
       // Import Logs in chunks
       for (let i = 0; i < stagedLogs.length; i += LOG_CHUNK) {
         const chunk = stagedLogs.slice(i, i + LOG_CHUNK);
+        
+        // 1. Write to local Dexie database first
         await db.log_entries.bulkPut(chunk);
+        
+        // 2. Attempt to sync to Supabase
+        try {
+            const supabaseChunk = chunk.map(log => ({
+                ...log,
+                log_date: log.log_date ? new Date(log.log_date).toISOString() : null,
+                medication_end_date: log.medication_end_date ? new Date(log.medication_end_date).toISOString() : null,
+                next_due_date: log.next_due_date ? new Date(log.next_due_date).toISOString() : null,
+                weathering_start_time: log.weathering_start_time ? new Date(log.weathering_start_time).toISOString() : null,
+                weathering_end_time: log.weathering_end_time ? new Date(log.weathering_end_time).toISOString() : null,
+                event_start_time: log.event_start_time ? new Date(log.event_start_time).toISOString() : null,
+                event_end_time: log.event_end_time ? new Date(log.event_end_time).toISOString() : null,
+                created_at: log.created_at ? new Date(log.created_at).toISOString() : new Date().toISOString(),
+                updated_at: log.updated_at ? new Date(log.updated_at).toISOString() : new Date().toISOString(),
+            }));
+            
+            const { error } = await supabase.from('log_entries').upsert(supabaseChunk);
+            if (error) {
+                console.error('Supabase sync error for logs chunk:', error);
+            }
+        } catch (syncError) {
+            console.error('Failed to sync logs chunk to Supabase:', syncError);
+        }
+
         processedCount += chunk.length;
         
         if (Date.now() - lastUpdate > 50 || processedCount === totalCount) {

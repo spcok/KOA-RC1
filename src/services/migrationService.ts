@@ -2,6 +2,7 @@
 import { db } from '@/src/db';
 import { Animal, LogEntry } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
+import { dataService } from './dataService';
 
 export const migrateLegacyData = async (userId: string, rawData: any): Promise<{ animalCount: number, logCount: number }> => {
   const animalsToCreate: Animal[] = [];
@@ -106,8 +107,8 @@ export const migrateLegacyData = async (userId: string, rawData: any): Promise<{
     logsToCreate.push(log);
   }
 
-  await db.animals.bulkPut(animalsToCreate);
-  await db.log_entries.bulkPut(logsToCreate);
+  await dataService.bulkCreateRecords('animals', db.animals, animalsToCreate);
+  await dataService.bulkCreateRecords('log_entries', db.log_entries, logsToCreate);
 
   return {
     animalCount: animalsToCreate.length,

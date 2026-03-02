@@ -158,6 +158,43 @@ export async function deleteRecord<T extends SyncableEntity>(
 }
 
 /**
+ * Generic function to bulk create records in Supabase and then in Dexie.
+ */
+export async function bulkCreateRecords<T extends SyncableEntity>(
+  tableName: string,
+  dexieTable: Table<T, string>,
+  records: T[]
+): Promise<void> {
+  try {
+    // 1. Prepare records (ensure timestamps)
+    const recordsToInsert = records.map(r => ({
+      ...r,
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString(),
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()
+    }));
+
+    // 2. Insert into Supabase in chunks
+    const CHUNK_SIZE = 1000;
+    for (let i = 0; i < recordsToInsert.length; i += CHUNK_SIZE) {
+      const chunk = recordsToInsert.slice(i, i + CHUNK_SIZE);
+      const { error } = await supabase.from(tableName).upsert(chunk);
+
+      if (error) {
+        console.error(`[Bulk Create Error] Supabase upsert failed for ${tableName}:`, error);
+        // We continue to Dexie so the user has local data, but we log the error.
+      }
+    }
+
+    // 3. Insert into Dexie
+    await dexieTable.bulkPut(recordsToInsert as T[]);
+    
+  } catch (err) {
+    console.error(`[Bulk Create Exception] Table ${tableName}:`, err);
+    throw err;
+  }
+}
+
+/**
  * Perform a full sync of all tables.
  */
 export async function syncAllTables(): Promise<void> {
@@ -190,5 +227,6 @@ export const dataService = {
   createRecord,
   updateRecord,
   deleteRecord,
-  syncAllTables
+  syncAllTables,
+  bulkCreateRecords
 };

@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '@/src/db';
 import { LocalBackupEntry } from '@/types';
+import { dataService } from './dataService';
 
 export const backupService = {
   generateFullBackup: async () => {
@@ -15,7 +16,7 @@ export const backupService = {
       db.incidents.toArray(),
       db.first_aid_log_entries.toArray(),
       db.contacts.toArray(),
-      db.organisation_profile.toArray(),
+      db.organisation_profiles.toArray(),
       db.log_entries.toArray()
     ]);
 
@@ -49,15 +50,15 @@ export const backupService = {
 
       // Batch updates
       const promises = [];
-      if (d.animals && d.animals.length > 0) promises.push(db.animals.bulkPut(d.animals));
-      if (d.tasks && d.tasks.length > 0) promises.push(db.tasks.bulkPut(d.tasks));
-      if (d.users && d.users.length > 0) promises.push(db.users.bulkPut(d.users));
-      if (d.siteLogs && d.siteLogs.length > 0) promises.push(db.site_log_entries.bulkPut(d.siteLogs));
-      if (d.incidents && d.incidents.length > 0) promises.push(db.incidents.bulkPut(d.incidents));
-      if (d.firstAidLogs && d.firstAidLogs.length > 0) promises.push(db.first_aid_log_entries.bulkPut(d.firstAidLogs));
-      if (d.contacts && d.contacts.length > 0) promises.push(db.contacts.bulkPut(d.contacts));
-      if (d.orgProfile && d.orgProfile.length > 0) promises.push(db.organisation_profile.bulkPut(d.orgProfile));
-      if (d.logEntries && d.logEntries.length > 0) promises.push(db.log_entries.bulkPut(d.logEntries));
+      if (d.animals && d.animals.length > 0) promises.push(dataService.bulkCreateRecords('animals', db.animals, d.animals));
+      if (d.tasks && d.tasks.length > 0) promises.push(dataService.bulkCreateRecords('tasks', db.tasks, d.tasks));
+      if (d.users && d.users.length > 0) promises.push(dataService.bulkCreateRecords('users', db.users, d.users));
+      if (d.siteLogs && d.siteLogs.length > 0) promises.push(dataService.bulkCreateRecords('site_log_entries', db.site_log_entries, d.siteLogs));
+      if (d.incidents && d.incidents.length > 0) promises.push(dataService.bulkCreateRecords('incidents', db.incidents, d.incidents));
+      if (d.firstAidLogs && d.firstAidLogs.length > 0) promises.push(dataService.bulkCreateRecords('first_aid_log_entries', db.first_aid_log_entries, d.firstAidLogs));
+      if (d.contacts && d.contacts.length > 0) promises.push(dataService.bulkCreateRecords('contacts', db.contacts, d.contacts));
+      if (d.orgProfile && d.orgProfile.length > 0) promises.push(dataService.bulkCreateRecords('organisation_profiles', db.organisation_profiles, d.orgProfile));
+      if (d.logEntries && d.logEntries.length > 0) promises.push(dataService.bulkCreateRecords('log_entries', db.log_entries, d.logEntries));
 
       await Promise.all(promises);
       return true;
